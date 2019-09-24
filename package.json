@@ -1,0 +1,11 @@
+{
+  "name": "test-sink",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "Pete Hodgson <git@thepete.net>",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "serverless": "^1.52.2"
+  }
+}

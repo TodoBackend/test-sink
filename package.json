@@ -5,6 +5,9 @@
   "author": "Pete Hodgson <git@thepete.net>",
   "license": "MIT",
   "private": true,
+  "scripts": {
+    "serverless:deploy": "serverless deploy"
+  },
   "devDependencies": {
     "serverless": "^1.52.2"
   }

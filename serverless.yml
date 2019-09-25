@@ -61,8 +61,8 @@ functions:
     handler: handlers/test-result-sink.handler
     events:
       - http:
-          path: /test-result-sink
-          method: get
+          path: /test-results
+          method: post
 
 
 # you can add CloudFormation resource templates here

@@ -22,6 +22,8 @@ service: todobackend-test-sink
 
 custom:
   lakeBucketName: todobackend--test-sink--lake
+  dynamo:
+    testResultsTableName: test-results-table-${self:provider.stage}
 
 provider:
   name: aws
@@ -36,10 +38,21 @@ provider:
       Action:
         - "s3:PutObject"
       Resource: "arn:aws:s3:::${self:custom.lakeBucketName}/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["TestResultsDynamoDBTable", "Arn" ] }
 
 # you can define service wide environment variables here
   environment:
     LAKE_BUCKET: ${self:custom.lakeBucketName}
+    TEST_RESULTS_TABLE: ${self:custom.dynamo.testResultsTableName}
 
 # you can add packaging information here
 #package:
@@ -72,7 +85,18 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:custom.lakeBucketName}
-#  Outputs:
-#     NewOutput:
-#       Description: "Description for the output"
-#       Value: "Some output value"
+    TestResultsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: testResultId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: testResultId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamo.testResultsTableName}

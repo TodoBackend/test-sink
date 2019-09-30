@@ -20,10 +20,16 @@ service: todobackend-test-sink
 # Check out our docs for more details
 # frameworkVersion: "=X.X.X"
 
+plugins:
+  - serverless-domain-manager
+
 custom:
-  lakeBucketName: todobackend--test-sink--lake
+  customDomain:
+    domainName: services.todobackend.com
+
+  lakeBucketName: todobackend-test-sink--${self:provider.stage}--lake
   dynamo:
-    testResultsTableName: test-results-table-${self:provider.stage}
+    testResultsTableName: todobackend-test-sink--${self:provider.stage}--test-results
 
 provider:
   name: aws
@@ -70,18 +76,25 @@ functions:
       - http:
           path: /hello
           method: get
-  testResultSink:
-    handler: handlers/test-result-sink.handler
+  testRunCreate:
+    handler: handlers/test-run.create
     events:
       - http:
-          path: /test-results
-          method: post
-
+          path: /test-runs
+          method: post  
+          cors: true
+  testResultPost:
+    handler: handlers/test-run.recordResults
+    events:
+      - http:
+          path: /test-runs/{testRunId}/results
+          method: post  
+          cors: true
 
 # you can add CloudFormation resource templates here
 resources:
   Resources:
-    NewResource:
+    LakeBucket:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:custom.lakeBucketName}
@@ -92,10 +105,16 @@ resources:
           -
             AttributeName: testResultId
             AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
         KeySchema:
           -
             AttributeName: testResultId
             KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
         ProvisionedThroughput:
           ReadCapacityUnits: 1
           WriteCapacityUnits: 1

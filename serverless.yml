@@ -59,6 +59,8 @@ provider:
   environment:
     LAKE_BUCKET: ${self:custom.lakeBucketName}
     TEST_RESULTS_TABLE: ${self:custom.dynamo.testResultsTableName}
+    HONEYCOMB_DATASET: 'TodoBackend'
+    HONEYCOMB_API_KEY: ${ssm:todobackend.test-sink.honeycomb-api-key}
 
 # you can add packaging information here
 #package:

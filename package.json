@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "aws-sdk": "^2.535.0",
+    "honeycomb-beeline": "^1.8.0",
     "uuid": "^3.3.3"
   }
 }

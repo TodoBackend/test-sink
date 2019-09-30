@@ -1,4 +1,9 @@
 'use strict';
+require('honeycomb-beeline')({
+    writeKey: process.env.HONEYCOMB_API_KEY,
+    dataset: process.env.HONEYCOMB_DATASET
+});
+
 const AWS = require('aws-sdk');
 const makeUuid = require('uuid/v4');
 

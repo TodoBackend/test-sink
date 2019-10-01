@@ -7,6 +7,7 @@ const beeline = require("honeycomb-beeline")({
 
 const AWS = require('aws-sdk');
 const makeUuid = require('uuid/v4');
+const useragent = require('useragent');
 
 const BUCKET_NAME = process.env.LAKE_BUCKET;
 const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
@@ -29,11 +30,22 @@ module.exports.create = (event, context) => {
         functionVersion: context.functionVersion,
         requestId: context.awsRequestId
       }, async () => {
+
         const testRunId = makeUuid();
         const createdAt = new Date().toISOString();
         beeline.addContext({testRunId});
 
-        await createTestRunInDb({uid:testRunId,createdAt});
+        const ua = useragent.parse(event.requestContext.identity.userAgent);
+        beeline.addContext({
+            ua,
+            "ua.family": ua.family,
+            "ua.version": [ua.major,ua.minor,ua.patch].join("."),
+            "ua.major": ua.major,
+            "ua.minor": ua.minor,
+            "ua.patch": ua.patch,
+        });
+
+        await createTestRunInDb({uid:testRunId,createdAt,ua});
 
         const baseUrl = event.requestContext.path;
         const testRunUrl = `${baseUrl}/${testRunId}`;

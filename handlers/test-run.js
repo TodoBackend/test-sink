@@ -1,11 +1,12 @@
 'use strict';
-require('honeycomb-beeline')({
-    writeKey: process.env.HONEYCOMB_API_KEY,
-    dataset: process.env.HONEYCOMB_DATASET
-});
-
+const Libhoney = require('libhoney');
 const AWS = require('aws-sdk');
 const makeUuid = require('uuid/v4');
+
+let honeycomb = new Libhoney({
+    writeKey: process.env.HONEYCOMB_API_KEY,
+    dataset: process.env.HONEYCOMB_DATASET
+  });
 
 const BUCKET_NAME = process.env.LAKE_BUCKET;
 const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
@@ -13,14 +14,24 @@ const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
 const s3 = new AWS.S3();
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
-module.exports.create = async event => {
-    const uuid = makeUuid();
-    const createdAt = new Date().toISOString();
+module.exports.create = async (event, context) => {
+    const startTime = Date.now();
 
-    await createTestRunInDb({uid:uuid,createdAt});
+    const honeycombEvent = honeycomb.newEvent();
+    honeycombEvent.add({
+        functionName: context.functionName,
+        functionVersion: context.functionVersion,
+        requestId: context.awsRequestId,
+    });
+
+    const testRunId = makeUuid();
+    const createdAt = new Date().toISOString();
+    honeycombEvent.addField('testRunId', testRunId);
+
+    await createTestRunInDb({uid:testRunId,createdAt});
 
     const baseUrl = event.requestContext.path;
-    const testRunUrl = `${baseUrl}/${uuid}`;
+    const testRunUrl = `${baseUrl}/${testRunId}`;
     const testResultsUrl = `${testRunUrl}/results`;
 
     const response = {
@@ -29,6 +40,9 @@ module.exports.create = async event => {
             results: { href: testResultsUrl }
         }
     };
+
+    honeycombEvent.addField("latencyMs",Date.now()-startTime);
+    honeycombEvent.send();
 
     return {
         statusCode: 201,
@@ -41,16 +55,32 @@ module.exports.create = async event => {
     };
 };
 
-module.exports.recordResults = async (event) => {
+module.exports.recordResults = async (event,context) => {
+    const startTime = Date.now();
+    const honeycombEvent = honeycomb.newEvent();
+    honeycombEvent.add({
+        functionName: context.functionName,
+        functionVersion: context.functionVersion,
+        requestId: context.awsRequestId,
+    });
+
     const testRunId = event.pathParameters.testRunId;
     const completedAt = new Date().toISOString();
 
     const testResults = event.body; // TODO: validation, DoS protection...
+    
+    honeycombEvent.add({
+        testRunId,
+        // TODO: full duration of test runs
+    });
 
     await Promise.all([
         recordRunCompletionInDb({uid:testRunId,completedAt}),
         writeResultsToS3(testRunId,testResults)
     ]);
+
+    honeycombEvent.addField("latencyMs",Date.now()-startTime);
+    honeycombEvent.send();
 
     return {
         statusCode: 201,

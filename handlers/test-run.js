@@ -108,18 +108,37 @@ async function createTestRunInDb({uid,createdAt}){
         createdAt
     };
 
+    const span = beeline.startSpan({
+        name: 'createTestRunInDb'
+    });
+
     const result = await dynamoDb.put({
         TableName: TABLE_NAME,
         Item: item
-    }).promise();
-
-    console.log('DynamoDb put result:', result);
+    }).promise().finally( ()=> {
+        beeline.finishSpan(span);
+    });
 
     return result;
 }
 
 async function recordRunCompletionInDb({uid,completedAt}){
-    // TODO
+    const span = beeline.startSpan({
+        name: 'recordRunCompletionInDb'
+    });
+
+    const result = await dynamoDb.update({
+        TableName: TABLE_NAME,
+        Key: {
+            testResultId: uid
+        }, 
+        UpdateExpression: "set completedAt = :c",
+        ExpressionAttributeValues: { ":c": completedAt },
+    }).promise().finally( ()=> {
+        beeline.finishSpan(span);
+    });
+
+    return result;
 }
 
 async function writeResultsToS3(uid,results){
@@ -131,15 +150,13 @@ async function writeResultsToS3(uid,results){
         key
     });
 
-    console.log('writing test results to',BUCKET_NAME,key);
-    const result = await s3.putObject({
-        Bucket: BUCKET_NAME,
-        Key: key,
-        Body: results
-    }).promise().finally( ()=> {
+    try{
+        return await s3.putObject({
+            Bucket: BUCKET_NAME,
+            Key: key,
+            Body: results
+        }).promise();
+    }finally{
         beeline.finishSpan(span);
-    })
-
-    console.log('S3 put result:', result);
-    return result;
+    }
 }

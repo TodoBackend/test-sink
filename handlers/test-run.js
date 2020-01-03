@@ -1,4 +1,5 @@
 'use strict';
+
 const beeline = require("honeycomb-beeline")({
   writeKey: process.env.HONEYCOMB_API_KEY,
   dataset: process.env.HONEYCOMB_DATASET,
@@ -60,11 +61,10 @@ module.exports.create = (event, context) => {
 
         return {
             statusCode: 201,
-            headers: {
+            headers: headersPlusCors({
                 "Location": testRunUrl,
-                "Content-Type": "application/json;charset=utf-8",
-                "Access-Control-Allow-Origin": "*" // TODO: lock down to todobackend.com
-            },
+                "Content-Type": "application/json;charset=utf-8"
+            }),
             body: JSON.stringify(response)
         };
       },
@@ -94,9 +94,7 @@ module.exports.recordResults = (event,context) => {
 
         return {
             statusCode: 201,
-            headers: {
-                "Access-Control-Allow-Origin": "*" // TODO: lock down to todobackend.com
-            },
+            headers: headersPlusCors(),
         }
       },
       ctx.traceId, ctx.parentSpanId);
@@ -159,4 +157,11 @@ async function writeResultsToS3(uid,results){
     }finally{
         beeline.finishSpan(span);
     }
+}
+
+function headersPlusCors(additionalHeaaders={}){
+    return {
+        "Access-Control-Allow-Origin": "https://todobackend.com",
+        ...additionalHeaaders
+    };
 }

@@ -85,14 +85,16 @@ functions:
       - http:
           path: /test-runs
           method: post  
-          cors: true
+          cors: 
+            origin: 'https://todobackend.com'
   testResultPost:
     handler: handlers/test-run.recordResults
     events:
       - http:
           path: /test-runs/{testRunId}/results
           method: post  
-          cors: true
+          cors: 
+            origin: 'https://todobackend.com'
 
 # you can add CloudFormation resource templates here
 resources:

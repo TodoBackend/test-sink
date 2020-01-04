@@ -22,6 +22,7 @@ service: todobackend-test-sink
 
 plugins:
   - serverless-domain-manager
+  - serverless-offline
 
 custom:
   customDomain:

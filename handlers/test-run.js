@@ -16,13 +16,6 @@ const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
 const s3 = new AWS.S3();
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
-function withTracePromise(metadataContext, fn, withTraceId, withParentSpanId, withDataset) {
-    const trace = beeline.startTrace(metadataContext, withTraceId, withParentSpanId, withDataset);
-    return fn().finally( ()=>{
-      beeline.finishTrace(trace);
-    } );
-}
-
 module.exports.create = (event, context) => {
     const ctx = beeline.unmarshalTraceContext((event.headers||{})["x-honeycomb-trace"] || "") || {};
     return withTracePromise({
@@ -121,42 +114,49 @@ async function createTestRunInDb({uid,createdAt}){
 }
 
 async function recordRunCompletionInDb({uid,completedAt}){
-    const span = beeline.startSpan({
+    return withSpanPromise({
         name: 'recordRunCompletionInDb'
+    }, () => {
+        return dynamoDb.update({
+            TableName: TABLE_NAME,
+            Key: {
+                testResultId: uid
+            }, 
+            UpdateExpression: "set completedAt = :c",
+            ExpressionAttributeValues: { ":c": completedAt },
+        }).promise();
     });
-
-    const result = await dynamoDb.update({
-        TableName: TABLE_NAME,
-        Key: {
-            testResultId: uid
-        }, 
-        UpdateExpression: "set completedAt = :c",
-        ExpressionAttributeValues: { ":c": completedAt },
-    }).promise().finally( ()=> {
-        beeline.finishSpan(span);
-    });
-
-    return result;
 }
 
-async function writeResultsToS3(uid,results){
+function writeResultsToS3(uid,results){
     const key = `test-results/${uid}`;
 
-    const span = beeline.startSpan({
+    return withSpanPromise({
         name: 'writeResultsToS3',
         bucket: BUCKET_NAME,
         key
-    });
-
-    try{
-        return await s3.putObject({
+    }, () => {
+        return s3.putObject({
             Bucket: BUCKET_NAME,
             Key: key,
             Body: results
         }).promise();
-    }finally{
-        beeline.finishSpan(span);
-    }
+    });
+}
+
+function withTracePromise(metadataContext, fn, withTraceId, withParentSpanId, withDataset) {
+    const trace = beeline.startTrace(metadataContext, withTraceId, withParentSpanId, withDataset);
+    return fn().finally( ()=>{
+      beeline.finishTrace(trace);
+    } );
+}
+
+function withSpanPromise(metadataContext, fn) {
+    return beeline.startAsyncSpan(metadataContext, (span) => {
+        return fn().finally( ()=> {
+            beeline.finishSpan(span);
+        });
+    });
 }
 
 function headersPlusCors(additionalHeaaders={}){

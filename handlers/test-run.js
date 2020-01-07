@@ -10,6 +10,18 @@ const AWS = require('aws-sdk');
 const makeUuid = require('uuid/v4');
 const useragent = require('useragent');
 
+const beelineDecisionRecorder = require('../src/featureFlags/beelineDecisionRecorder')({
+    beeline
+});
+const FEATURES = ['forceAsyncToBeInSeries'];
+
+const featureFlags = require('../src/featureFlags')(
+    FEATURES,
+    {
+        recordFeatureDecision: beelineDecisionRecorder
+    }
+);
+
 const BUCKET_NAME = process.env.LAKE_BUCKET;
 const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
 
@@ -65,6 +77,8 @@ module.exports.create = (event, context) => {
 };
 
 module.exports.recordResults = (event,context) => {
+    const featureFlagContext = featureFlags.newContext();
+
     const ctx = beeline.unmarshalTraceContext((event.headers||{})["x-honeycomb-trace"] || "") || {};
     return withTracePromise({
         name: "testResultPost",
@@ -78,12 +92,17 @@ module.exports.recordResults = (event,context) => {
         const testResults = event.body; // TODO: validation, DoS protection...
         
         beeline.addContext({testRunId});
-        // TODO: add full duration of test runs
 
-        await Promise.all([
-            recordRunCompletionInDb({uid:testRunId,completedAt}),
-            writeResultsToS3(testRunId,testResults)
-        ]);
+        const operationThunks = [
+            () => recordRunCompletionInDb({uid:testRunId,completedAt}),
+            () => writeResultsToS3(testRunId,testResults)
+        ];
+
+        if( featureFlagContext.forceAsyncToBeInSeries() ){
+            await runOperationsInSeries(operationThunks);
+        }else{
+            await runOperationsInParallel(operationThunks);
+        }
 
         return {
             statusCode: 201,
@@ -164,4 +183,15 @@ function headersPlusCors(additionalHeaaders={}){
         "Access-Control-Allow-Origin": "https://todobackend.com",
         ...additionalHeaaders
     };
+}
+
+function runOperationsInParallel(asyncOperationThunks){
+    const operationPromises = asyncOperationThunks.map( thunk =>  thunk() )
+    return Promise.all(operationPromises);
+}
+
+async function runOperationsInSeries(asyncOperationThunks){
+    for( const thunk of asyncOperationThunks ){
+        await thunk();
+    }
 }

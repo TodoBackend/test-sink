@@ -1,11 +1,19 @@
-module.exports = function createFeatureFlags(features,{flipCoin=randomCoinFlip}= {}) {
+const noop = ()=>{};
+
+module.exports = function createFeatureFlags(
+  features,
+  {flipCoin=randomCoinFlip,recordFeatureDecision=noop}= {}
+) {
   function newContext(){
     let context = {};
     features.forEach(feature => {
       const decision = flipCoin();
 
       // freeze decision into a function
-      context[feature] = ()=>decision;
+      context[feature] = ()=>{
+        recordFeatureDecision(feature,decision);
+        return decision;
+      }
     });
 
     return context;

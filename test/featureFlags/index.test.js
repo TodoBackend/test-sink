@@ -1,12 +1,6 @@
-const createFeatureFlags = require('../featureFlags');
+const createFeatureFlags = require('../../src/featureFlags');
 
 describe('featureFlags', () => {
-  it('constructs', () => {
-    const featureFlags = createFeatureFlags();
-    expect(featureFlags).toBeDefined();
-    expect(featureFlags.newContext).toBeInstanceOf(Function);
-  });
-
   describe('random A/B bucketing', () => {
     test('within the same context scope, consistently returns the same decision for a feature', () => {
       const features = ['exampleFeature'];
@@ -31,14 +25,30 @@ describe('featureFlags', () => {
       expect(decisionsForA).toSatisfyAll(d=> d===true);
       expect(decisionsForB).toSatisfyAll(d=> d===false);
     });
+
+    test('feature decisions are roughly 50/50', () => {
+      const featureFlags = createFeatureFlags(['someFeature']);
+      const decisions = Array.from(Array(10000)).map( ()=> featureFlags.newContext().someFeature() );
+      
+      const positiveDecisions = decisions.filter( decision => decision===true );
+      expect(positiveDecisions.length).toBeWithin(4500,5500);
+    });
   });
 
-  test('feature decisions are roughly 50/50', () => {
-    const featureFlags = createFeatureFlags(['someFeature']);
-    const decisions = Array.from(Array(10000)).map( ()=> featureFlags.newContext().someFeature() );
-    
-    const positiveDecisions = decisions.filter( decision => decision===true );
-    expect(positiveDecisions.length).toBeWithin(4500,5500);
+  it('records feature decision', () => {
+    const features = ['featureA','featureB','featureC'];
+    const recordFeatureDecision = jest.fn();
+    const flipCoin = createFlappingCoinFlip(true);
+
+    const featureFlagContext = createFeatureFlags(features,{flipCoin,recordFeatureDecision}).newContext();
+
+    featureFlagContext.featureB();
+    featureFlagContext.featureC();
+    featureFlagContext.featureB();
+
+    expect(recordFeatureDecision).toHaveBeenCalledTimes(3);
+    expect(recordFeatureDecision).toHaveBeenCalledWith('featureB',false);
+    expect(recordFeatureDecision).toHaveBeenCalledWith('featureC',true);
   });
 });
 

@@ -69,18 +69,18 @@ describe('requestContext', () => {
         const spyBeeline = createFakeBeeline();
         const observability = observabilityWithFakeBeeline(spyBeeline);
         
-        observability.withSpanAsync( () => Promise.resolve() );
+        observability.withSpanAsync( {extra:'context'}, () => Promise.resolve() );
 
-        expect(spyBeeline.startSpan).toHaveBeenCalled();
+        expect(spyBeeline.startAsyncSpan).toHaveBeenCalledWith({extra:'context'},expect.anything());
       });
 
-      it('returns the result of the async fn, and tells beeline to finish the span', async () => {
+      it('runs the async fn and returns the result, and tells beeline to finish the span', async () => {
         const fakeBeeline = createFakeBeeline({
-          startSpan(){ return 'fakeSpan'; }
+          startAsyncSpan: jest.fn( (context,spanFn) => spanFn('fakeSpan') ),
         });
         const observability = observabilityWithFakeBeeline(fakeBeeline);
         
-        const result = observability.withSpanAsync(()=> Promise.resolve('result from async function'));
+        const result = observability.withSpanAsync({}, ()=> Promise.resolve('result from async function'));
 
         expect(fakeBeeline.finishSpan).not.toHaveBeenCalled();
         await expect(result).resolves.toEqual('result from async function');
@@ -89,11 +89,11 @@ describe('requestContext', () => {
 
       it('tells beeline the span has finished, with additional error context, if the async function rejects', async () => {
         const fakeBeeline = createFakeBeeline({
-          startSpan(){ return 'fakeSpan'; }
+          startAsyncSpan: jest.fn( (context,spanFn) => spanFn('fakeSpan') ),
         });
         const observability = observabilityWithFakeBeeline(fakeBeeline);
         
-        const result = observability.withSpanAsync(()=> Promise.reject('error from async func'));
+        const result = observability.withSpanAsync({}, ()=> Promise.reject('error from async func'));
 
         await expect(result).rejects.toEqual('error from async func');
 
@@ -102,11 +102,31 @@ describe('requestContext', () => {
       });
     });
 
+    describe('addContext', () => {
+      it('proxies through to beeline', () => {
+        const fakeBeeline = createFakeBeeline();
+        const observability = observabilityWithFakeBeeline(fakeBeeline);
+
+        observability.addContext({foo:1,bar:2});
+
+        expect(fakeBeeline.addContext).toHaveBeenCalledWith({foo:1,bar:2});
+      });
+
+      it('supports adding a single key-value pair', () => {
+        const fakeBeeline = createFakeBeeline();
+        const observability = observabilityWithFakeBeeline(fakeBeeline);
+
+        observability.addContext('key','value');
+
+        expect(fakeBeeline.addContext).toHaveBeenCalledWith({key:'value'});
+      });
+    });
+
     function createFakeBeeline(overrides={}){
       return {
           startTrace: jest.fn(),
           finishTrace: jest.fn(),
-          startSpan: jest.fn(),
+          startAsyncSpan: jest.fn( (context,spanFn) => spanFn('blah') ),
           finishSpan: jest.fn(),
           addContext: jest.fn(),
           ...overrides

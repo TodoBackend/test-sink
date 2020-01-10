@@ -1,14 +1,10 @@
 'use strict';
 
-const beeline = require("honeycomb-beeline")({
-  writeKey: process.env.HONEYCOMB_API_KEY,
-  dataset: process.env.HONEYCOMB_DATASET,
-  serviceName: "test-sink"
-});
-
 const AWS = require('aws-sdk');
 const makeUuid = require('uuid/v4');
 const useragent = require('useragent');
+
+const newRequestContext = require('../src/requestContext');
 
 const BUCKET_NAME = process.env.LAKE_BUCKET;
 const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
@@ -16,105 +12,102 @@ const TABLE_NAME = process.env.TEST_RESULTS_TABLE;
 const s3 = new AWS.S3();
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
-module.exports.create = (event, context) => {
-    const ctx = beeline.unmarshalTraceContext((event.headers||{})["x-honeycomb-trace"] || "") || {};
-    return withTracePromise({
-        name: "testRunCreate",
-        functionName: context.functionName,
-        functionVersion: context.functionVersion,
-        requestId: context.awsRequestId
-      }, async () => {
+module.exports.create = (lambdaEvent, lambdaContext) => {
+    const requestContext = newRequestContext({lambdaEvent,lambdaContext});
+    const {observability} = requestContext;
+    return observability.withTraceAsync(
+        { name: "testRunCreate" }, 
+        async () => {
+            const testRunId = makeUuid();
+            const createdAt = new Date().toISOString();
+            const ua = useragent.parse(lambdaEvent.requestContext.identity.userAgent);
 
-        const testRunId = makeUuid();
-        const createdAt = new Date().toISOString();
-        beeline.addContext({testRunId});
+            observability.addContext({
+                testRunId,
+                ua,
+                "ua.family": ua.family,
+                "ua.version": [ua.major,ua.minor,ua.patch].join("."),
+                "ua.major": ua.major,
+                "ua.minor": ua.minor,
+                "ua.patch": ua.patch,
+            });
 
-        const ua = useragent.parse(event.requestContext.identity.userAgent);
-        beeline.addContext({
-            ua,
-            "ua.family": ua.family,
-            "ua.version": [ua.major,ua.minor,ua.patch].join("."),
-            "ua.major": ua.major,
-            "ua.minor": ua.minor,
-            "ua.patch": ua.patch,
-        });
+            await createTestRunInDb({uid:testRunId,createdAt,ua,observability});
 
-        await createTestRunInDb({uid:testRunId,createdAt,ua});
+            const baseUrl = lambdaEvent.requestContext.path;
+            const testRunUrl = `${baseUrl}/${testRunId}`;
+            const testResultsUrl = `${testRunUrl}/results`;
 
-        const baseUrl = event.requestContext.path;
-        const testRunUrl = `${baseUrl}/${testRunId}`;
-        const testResultsUrl = `${testRunUrl}/results`;
+            const response = {
+                _links: {
+                    self: { href: testRunUrl },
+                    results: { href: testResultsUrl }
+                }
+            };
 
-        const response = {
-            _links: {
-                self: { href: testRunUrl },
-                results: { href: testResultsUrl }
-            }
-        };
-
-        return {
-            statusCode: 201,
-            headers: headersPlusCors({
-                "Location": testRunUrl,
-                "Content-Type": "application/json;charset=utf-8"
-            }),
-            body: JSON.stringify(response)
-        };
-      },
-      ctx.traceId, ctx.parentSpanId);
+            return {
+                statusCode: 201,
+                headers: headersPlusCors({
+                    "Location": testRunUrl,
+                    "Content-Type": "application/json;charset=utf-8"
+                }),
+                body: JSON.stringify(response)
+            };
+        }
+    );
 };
 
-module.exports.recordResults = (event,context) => {
-    const ctx = beeline.unmarshalTraceContext((event.headers||{})["x-honeycomb-trace"] || "") || {};
-    return withTracePromise({
-        name: "testResultPost",
-        functionName: context.functionName,
-        functionVersion: context.functionVersion,
-        requestId: context.awsRequestId
-      }, async () => {
-        const testRunId = event.pathParameters.testRunId;
-        const completedAt = new Date().toISOString();
+module.exports.recordResults = (lambdaEvent,lambdaContext) => {
+    const requestContext = newRequestContext({lambdaEvent,lambdaContext});
+    const {observability,features} = requestContext;
 
-        const testResults = event.body; // TODO: validation, DoS protection...
-        
-        beeline.addContext({testRunId});
-        // TODO: add full duration of test runs
+    return observability.withTraceAsync(
+        { name: "testResultPost" },
+        async () => {
+            const testRunId = lambdaEvent.pathParameters.testRunId;
+            const completedAt = new Date().toISOString();
 
-        await Promise.all([
-            recordRunCompletionInDb({uid:testRunId,completedAt}),
-            writeResultsToS3(testRunId,testResults)
-        ]);
+            const testResults = lambdaEvent.body; // TODO: validation, DoS protection...
+            
+            observability.addContext({testRunId});
 
-        return {
-            statusCode: 201,
-            headers: headersPlusCors(),
+            const operationThunks = [
+                () => recordRunCompletionInDb({uid:testRunId,completedAt,observability}),
+                () => writeResultsToS3({uid:testRunId,results:testResults,observability})
+            ];
+
+            if( features.forceAsyncToBeInSeries() ){
+                await runOperationsInSeries(operationThunks);
+            }else{
+                await runOperationsInParallel(operationThunks);
+            }
+
+            return {
+                statusCode: 201,
+                headers: headersPlusCors(),
+            };
         }
-      },
-      ctx.traceId, ctx.parentSpanId);
+    );
 }
 
-async function createTestRunInDb({uid,createdAt}){
+async function createTestRunInDb({uid,createdAt,observability}){
     const item = {
         testResultId: uid,
         createdAt
     };
 
-    const span = beeline.startSpan({
+    return await observability.withSpanAsync({
         name: 'createTestRunInDb'
+    }, () => {
+        return dynamoDb.put({
+            TableName: TABLE_NAME,
+            Item: item
+        }).promise();
     });
-
-    const result = await dynamoDb.put({
-        TableName: TABLE_NAME,
-        Item: item
-    }).promise().finally( ()=> {
-        beeline.finishSpan(span);
-    });
-
-    return result;
 }
 
-async function recordRunCompletionInDb({uid,completedAt}){
-    return withSpanPromise({
+async function recordRunCompletionInDb({uid,completedAt,observability}){
+    return observability.withSpanAsync({
         name: 'recordRunCompletionInDb'
     }, () => {
         return dynamoDb.update({
@@ -128,10 +121,10 @@ async function recordRunCompletionInDb({uid,completedAt}){
     });
 }
 
-function writeResultsToS3(uid,results){
+function writeResultsToS3({uid,results,observability}){
     const key = `test-results/${uid}`;
 
-    return withSpanPromise({
+    return observability.withSpanAsync({
         name: 'writeResultsToS3',
         bucket: BUCKET_NAME,
         key
@@ -144,24 +137,20 @@ function writeResultsToS3(uid,results){
     });
 }
 
-function withTracePromise(metadataContext, fn, withTraceId, withParentSpanId, withDataset) {
-    const trace = beeline.startTrace(metadataContext, withTraceId, withParentSpanId, withDataset);
-    return fn().finally( ()=>{
-      beeline.finishTrace(trace);
-    } );
-}
-
-function withSpanPromise(metadataContext, fn) {
-    return beeline.startAsyncSpan(metadataContext, (span) => {
-        return fn().finally( ()=> {
-            beeline.finishSpan(span);
-        });
-    });
-}
-
 function headersPlusCors(additionalHeaaders={}){
     return {
         "Access-Control-Allow-Origin": "https://todobackend.com",
         ...additionalHeaaders
     };
+}
+
+function runOperationsInParallel(asyncOperationThunks){
+    const operationPromises = asyncOperationThunks.map( thunk =>  thunk() )
+    return Promise.all(operationPromises);
+}
+
+async function runOperationsInSeries(asyncOperationThunks){
+    for( const thunk of asyncOperationThunks ){
+        await thunk();
+    }
 }
